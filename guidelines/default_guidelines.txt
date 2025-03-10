@@ -1,0 +1,5 @@
+1. Follow clean code principles.
+2. Ensure proper exception handling.
+3. Maintain modularity and separation of concerns.
+4. Avoid code duplication.
+5. Follow architecture layering standards.
