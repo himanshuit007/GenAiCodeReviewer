@@ -1,5 +1,23 @@
+Please perform a detailed code review of the following source code with below guidelines : 
+
 1. Follow clean code principles.
 2. Ensure proper exception handling.
 3. Maintain modularity and separation of concerns.
 4. Avoid code duplication.
 5. Follow architecture layering standards.
+
+Identify and classify any issues under the following categories:
+- Issue Type: Security / Coding Practice / Logic
+- Priority: High / Medium / Low
+- Effort Estimate to fix: Small / Medium / Large
+- Suggested Fix: Provide a brief improved code snippet or explanation
+
+Output the review in the following structured JSON format:
+
+{{
+  "issue_type": "...",
+  "priority": "...",
+  "effort": "...",
+  "suggested_fix": "...",
+  "explanation": "..."
+}}
