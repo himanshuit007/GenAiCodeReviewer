@@ -9,6 +9,10 @@ import streamlit as st
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 import re
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
+import io
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from app.git_cloner import clone_repo
@@ -125,6 +129,15 @@ def restore_session():
             st.session_state.username = data["username"]
             st.session_state.role = data["role"]
 
+# Function to generate PDF from review text
+def generate_pdf(review_text, filename):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = [Paragraph(review_text.replace('\n', '<br/>'), styles['Normal'])]
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
 ensure_default_admin()
 restore_session()
@@ -136,7 +149,6 @@ if "menu" not in st.session_state:
     st.session_state.menu = "Login"
 
 # Menu logic based on login state
-# Menu logic based on login state
 if not st.session_state.get("logged_in"):
     options = ["Login", "Register", "Forgot Password"]
     default_menu = st.session_state.get("menu", "Login")
@@ -144,14 +156,12 @@ if not st.session_state.get("logged_in"):
     menu = st.sidebar.selectbox("Menu", options, index=default_index)
 else:
     if st.session_state.get("role") == "admin":
-        options = ["Code Reviewer","Profile", "Admin Dashboard", "Logout"]
+        options = ["Code Reviewer", "Profile", "Admin Dashboard", "Logout"]
     else:
-        options = ["Code Reviewer","Profile", "Logout"]
+        options = ["Code Reviewer", "Profile", "Logout"]
     default_menu = st.session_state.get("menu", "Code Reviewer")
     default_index = options.index(default_menu) if default_menu in options else 0
     menu = st.sidebar.selectbox("Menu", options, index=default_index)
-
-
 
 # ========== Menu: Register ==========
 if menu == "Register":
@@ -160,7 +170,7 @@ if menu == "Register":
     new_email = st.text_input("Email")
     new_password = st.text_input("New Password", type="password")
     if st.button("Register"):
-        if register_user(new_user, new_password, new_email, role):
+        if register_user(new_user, new_password, new_email, "dev"):
             st.success("✅ Registration successful!")
         else:
             st.error("❌ Username already exists!")
@@ -283,7 +293,6 @@ elif menu == "Code Reviewer":
                 st.session_state.show_prev_projects = True
                 st.session_state.show_new_review = False
 
-
         # ---------------------------------------------
         # 🟢 View Previous Projects Block
         if st.session_state.show_prev_projects:
@@ -310,7 +319,7 @@ elif menu == "Code Reviewer":
                             with open(project_md, "rb") as f:
                                 st.download_button("📥 Download Project-Level Summary", f, file_name=f"{project}_overall_review.md")
 
-                        # File-Level Review Table (no nested expanders)
+                        # File-Level Review Table
                         file_review_data = []
                         report_files = [f for f in os.listdir(report_dir) if f.endswith(".json")]
                         for rf in sorted(report_files):
@@ -325,10 +334,10 @@ elif menu == "Code Reviewer":
                         if file_review_data:
                             st.markdown("**📄 File-Level Reviews (Summary Preview Table)**")
                             st.dataframe(pd.DataFrame(file_review_data), use_container_width=True)
-                # ---------------------------------------------
-                # 🟢 Start New Review Block
-        elif st.session_state.show_new_review:
 
+        # ---------------------------------------------
+        # 🟢 Start New Review Block
+        elif st.session_state.show_new_review:
             repo_url = st.text_input("Enter GitHub Repo URL")
 
             def safe_llm_call(prompt, timeout_seconds=60):
@@ -345,7 +354,7 @@ elif menu == "Code Reviewer":
                 else:
                     try:
                         fact = random.choice(fun_facts)
-                        with st.spinner(f"Cloning and reviewing project..."):
+                        with st.spinner(f"Cloning and reviewing project... {fact}"):
                             project_path = clone_repo(repo_url)
                             project_name = os.path.basename(project_path).split("_")[0]
                             files = read_project_files(project_path)
@@ -357,7 +366,7 @@ elif menu == "Code Reviewer":
 
                             progress_bar = st.progress(0)
                             status_placeholder = st.empty()
-                            status_table = []
+                            file_review_data = []
 
                             def review_file(i, file_path):
                                 file_name = os.path.basename(file_path)
@@ -374,18 +383,53 @@ elif menu == "Code Reviewer":
                                                     metadata={"file": str(file_path), "summary": review_text})
                                     with open(os.path.join(report_dir, f"review_{i+1}.json"), "w") as out:
                                         json.dump({"file": file_path, "summary": review_text}, out)
-                                    return {"File": file_name, "Status": "✅ Reviewed"}
+                                    return {"File": file_name, "Status": "✅ Reviewed", "Review": review_text}
                                 except Exception as e:
-                                    return {"File": file_name, "Status": f"❌ {str(e)}"}
+                                    return {"File": file_name, "Status": f"❌ {str(e)}", "Review": f"Error: {str(e)}"}
 
                             with ThreadPoolExecutor(max_workers=20) as executor:
                                 futures = {executor.submit(review_file, i, file): file for i, file in enumerate(files)}
                                 for i, future in enumerate(as_completed(futures)):
-                                    status_table.append(future.result())
+                                    file_review_data.append(future.result())
                                     progress_bar.progress((i + 1) / len(files))
-                            
-                            
-                            
+
+                            # Display File-Level Review Table with Buttons
+                            progress_bar.progress(1.0)
+                            status_placeholder.empty()
+                            st.subheader("📄 File-Level Review Summary")
+                            if file_review_data:
+                                st.write("### File Reviews")
+                                # Table header
+                                col1, col2, col3 = st.columns([3, 1, 2])
+                                with col1:
+                                    st.write("**Filename**")
+                                with col2:
+                                    st.write("**Review**")
+                                with col3:
+                                    st.write("**Download PDF**")
+
+                                # Table rows
+                                for i, review in enumerate(file_review_data):
+                                    col1, col2, col3 = st.columns([3, 1, 2])
+                                    with col1:
+                                        st.write(review["File"])
+                                    with col2:
+                                        if st.button("View", key=f"review_{i}"):
+                                            st.session_state[f"show_review_{i}"] = not st.session_state.get(f"show_review_{i}", False)
+                                    with col3:
+                                        pdf_buffer = generate_pdf(review["Review"], review["File"])
+                                        st.download_button(
+                                            label="Download",
+                                            data=pdf_buffer,
+                                            file_name=f"{review['File']}_review.pdf",
+                                            mime="application/pdf",
+                                            key=f"download_{i}"
+                                        )
+                                    if st.session_state.get(f"show_review_{i}", False):
+                                        with st.expander(f"Review for {review['File']}"):
+                                            st.markdown(review["Review"])
+                            else:
+                                st.info("No files were reviewed. Check if the repository contains supported file types (.java, .py, .js, .html, .txt).")
 
                             # ===== ✅ Whole Project-Level Review =====
                             st.subheader("🧠 Project-Level Review Summary")
@@ -424,5 +468,3 @@ elif menu == "Code Reviewer":
 
                     except Exception as e:
                         st.error(f"Review Failed: {e}")
-
-                
