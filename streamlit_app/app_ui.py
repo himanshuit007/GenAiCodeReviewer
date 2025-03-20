@@ -13,6 +13,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet
 import io
+import requests
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from app.git_cloner import clone_repo
@@ -128,6 +129,20 @@ def restore_session():
             st.session_state.logged_in = True
             st.session_state.username = data["username"]
             st.session_state.role = data["role"]
+
+# Function to fetch available Ollama models
+def get_ollama_models():
+    try:
+        response = requests.get("http://localhost:11434/api/tags")
+        if response.status_code == 200:
+            models_data = response.json()
+            return [model["name"] for model in models_data.get("models", [])]
+        else:
+            st.error("Failed to fetch Ollama models. Is Ollama running locally?")
+            return []
+    except requests.ConnectionError:
+        st.error("Could not connect to Ollama at http://localhost:11434. Please ensure it’s running.")
+        return []
 
 # Function to generate PDF from review text
 def generate_pdf(review_text, filename):
@@ -339,10 +354,14 @@ elif menu == "Code Reviewer":
         # 🟢 Start New Review Block
         elif st.session_state.show_new_review:
             repo_url = st.text_input("Enter GitHub Repo URL")
+            
+            # Fetch and display Ollama models
+            ollama_models = get_ollama_models()
+            selected_model = st.selectbox("Select Ollama Model", ollama_models) if ollama_models else st.error("No Ollama models available.")
 
-            def safe_llm_call(prompt, timeout_seconds=60):
+            def safe_llm_call(prompt, model, timeout_seconds=60):
                 with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(answer_question, prompt)
+                    future = executor.submit(answer_question, prompt, model=model)  # Pass model to answer_question
                     try:
                         return future.result(timeout=timeout_seconds)
                     except TimeoutError:
@@ -351,10 +370,12 @@ elif menu == "Code Reviewer":
             if st.button("Start Review"):
                 if not is_valid_github_url(repo_url):
                     st.error("❌ Invalid GitHub repository URL. It should be in format: https://github.com/username/repository")
+                elif not selected_model:
+                    st.error("❌ Please select an Ollama model.")
                 else:
                     try:
                         fact = random.choice(fun_facts)
-                        with st.spinner(f"Cloning and reviewing project... {fact}"):
+                        with st.spinner(f"Cloning and reviewing project with {selected_model}... {fact}"):
                             project_path = clone_repo(repo_url)
                             project_name = os.path.basename(project_path).split("_")[0]
                             files = read_project_files(project_path)
@@ -373,8 +394,8 @@ elif menu == "Code Reviewer":
                                 try:
                                     with open(file_path, "r", encoding="utf-8") as f:
                                         content = f.read()
-                                    prompt = f"Review this code for best practices:\n\n{content[:1500]}"
-                                    review = safe_llm_call(prompt)
+                                    prompt = f"Review this code for best practices. Also mention who are you?:\n\n{content[:1500]}"
+                                    review = safe_llm_call(prompt, selected_model)
                                     review_text = review.get("result", str(review)) if isinstance(review, dict) else review
                                     # Clean <think> sections from LLM output
                                     review_text = re.sub(r"<think>.*?</think>", "", review_text, flags=re.DOTALL)
@@ -451,11 +472,13 @@ elif menu == "Code Reviewer":
                             5. Coding Standards
                             6. Suggestions
 
+                            Also mention who are you?
+
                             Review Below Project:
                             =====================
                             {project_code_combined}
                             """
-                            project_review = safe_llm_call(project_prompt)
+                            project_review = safe_llm_call(project_prompt, selected_model)
                             review_text = project_review.get("result", str(project_review)) if isinstance(project_review, dict) else str(project_review)
                             review_text = re.sub(r"<think>.*?</think>", "", review_text, flags=re.DOTALL)
 
