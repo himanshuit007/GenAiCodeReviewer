@@ -14,17 +14,46 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet
 import io
 import requests
-
+import subprocess
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from app.git_cloner import clone_repo
 from app.file_reader import read_project_files
 from app.vector_store_client import add_to_collection, create_collection
 from app.embedding_generator import get_embedding
 from app.qa_engine import answer_question
+from markdown import markdown
+from bs4 import BeautifulSoup
 
 USER_DB = "user_data/users.json"
 LOGIN_LOG = "user_data/user_login_log.json"
 SESSION_CACHE_FILE = "user_data/session_cache.json"
+PROMPTS_DIR = "prompts"
+
+os.makedirs(PROMPTS_DIR, exist_ok=True)
+FILE_PROMPT_PATH = os.path.join(PROMPTS_DIR, "file_review_prompt.txt")
+PROJECT_PROMPT_PATH = os.path.join(PROMPTS_DIR, "project_review_prompt.txt")
+
+
+default_file_prompt = """Your full powerful file review prompt here with {{code}} placeholder."""
+default_project_prompt = """Your full robust project review prompt here with {{code}} placeholder."""
+
+if not os.path.exists(FILE_PROMPT_PATH):
+    with open(FILE_PROMPT_PATH, "w", encoding="utf-8") as f:
+        f.write(default_file_prompt)
+
+if not os.path.exists(PROJECT_PROMPT_PATH):
+    with open(PROJECT_PROMPT_PATH, "w", encoding="utf-8") as f:
+        f.write(default_project_prompt)
+
+def load_prompt(filepath):
+    if os.path.exists(filepath):
+        with open(filepath, "r", encoding="utf-8") as f:
+            return f.read()
+    return ""
+def remove_markdown_using_html(text):
+    html = markdown(text)
+    soup = BeautifulSoup(html, "html.parser")
+    return soup.get_text()
 
 import random
 
@@ -86,6 +115,8 @@ def register_user(username, password, email, role="dev"):
     users = load_users()
     if username in users:
         return False
+    if not is_strong_password(password):
+        return False
     users[username] = {
         "password": hash_password(password),
         "email": email,
@@ -94,7 +125,18 @@ def register_user(username, password, email, role="dev"):
     }
     save_users(users)
     return True
-
+def is_strong_password(password):
+    if len(password) < 12:
+        return False
+    if not re.search(r'[A-Z]', password):  # At least one uppercase
+        return False
+    if not re.search(r'[a-z]', password):  # At least one lowercase
+        return False
+    if not re.search(r'[0-9]', password):  # At least one digit
+        return False
+    if not re.search(r'[^A-Za-z0-9]', password):  # At least one special character
+        return False
+    return True
 def authenticate_user(username, password):
     users = load_users()
     if username not in users:
@@ -188,7 +230,7 @@ if menu == "Register":
         if register_user(new_user, new_password, new_email, "dev"):
             st.success("✅ Registration successful!")
         else:
-            st.error("❌ Username already exists!")
+            st.error("❌ Username already exists or password is not secure!")
 
 # ========== Menu: Login ==========
 elif menu == "Login":
@@ -327,7 +369,7 @@ elif menu == "Code Reviewer":
                         # Project-Level Review Summary
                         project_md = os.path.join(report_dir, "project_overall_review.md")
                         if os.path.exists(project_md):
-                            with open(project_md, "r", encoding="utf-8") as f:
+                            with open(project_md, "r", encoding="utf-8", errors='replace') as f:
                                 summary_text = f.read()
                             st.markdown("**🧠 Project-Level Review (Preview)**")
                             st.markdown(summary_text + "..." if len(summary_text) > 1000 else summary_text)
@@ -353,6 +395,16 @@ elif menu == "Code Reviewer":
         # ---------------------------------------------
         # 🟢 Start New Review Block
         elif st.session_state.show_new_review:
+            st.subheader("⚙️ Review Prompt Configuration")
+            file_prompt_template = st.text_area("📄 File Review Prompt Template", load_prompt(FILE_PROMPT_PATH), height=68)
+            project_prompt_template = st.text_area("📂 Project Review Prompt Template", load_prompt(PROJECT_PROMPT_PATH), height=68)
+            if st.button("💾 Save Prompts"):
+                with open(FILE_PROMPT_PATH, "w", encoding="utf-8") as f:
+                    f.write(file_prompt_template)
+                with open(PROJECT_PROMPT_PATH, "w", encoding="utf-8") as f:
+                    f.write(project_prompt_template)
+                st.success("Prompts saved successfully!")
+
             repo_url = st.text_input("Enter GitHub Repo URL")
             
             # Fetch and display Ollama models
@@ -375,7 +427,8 @@ elif menu == "Code Reviewer":
                 else:
                     try:
                         fact = random.choice(fun_facts)
-                        with st.spinner(f"Cloning and reviewing project with {selected_model}... {fact}"):
+                        with st.spinner(f"Cloning and reviewing project with {selected_model}"):
+                            st.subheader(fact)
                             project_path = clone_repo(repo_url)
                             project_name = os.path.basename(project_path).split("_")[0]
                             files = read_project_files(project_path)
@@ -394,65 +447,10 @@ elif menu == "Code Reviewer":
                                 try:
                                     with open(file_path, "r", encoding="utf-8") as f:
                                         content = f.read()
-                                    prompt = f"""
-                                    You are a senior software architect and expert code reviewer.
+                                    with open(FILE_PROMPT_PATH, "r", encoding="utf-8") as f:
+                                        prompt_template = f.read()
+                                    prompt = prompt_template.replace("{{content}}", content)
 
-                                    Your task is to analyze the following source code thoroughly and identify all potential issues and improvements.
-
-                                    Please review the code using the following structure:
-
-                                    ---
-
-                                    1. Code Quality Issues
-                                    - Highlight problems related to readability, naming conventions, unused code, duplicate logic, deep nesting, or long methods.
-                                    - Suggest best practices to improve clarity and maintainability.
-
-                                    2. Security Vulnerabilities
-                                    - Identify any unsafe practices, such as hardcoded secrets, insecure APIs, open endpoints, injection vulnerabilities, or insufficient validation/sanitization.
-
-                                    3. Exception Handling
-                                    - Analyze how errors and exceptions are managed.
-                                    - Are exceptions caught and logged properly?
-                                    - Are there missing try/catch blocks or poor error escalation patterns?
-
-                                    4. Performance Bottlenecks
-                                    - Are there inefficient loops, expensive operations, excessive memory usage, or synchronous operations that can be optimized?
-                                    - Suggestions for performance tuning (e.g., caching, batching, lazy loading).
-
-                                    5. Maintainability & Modularity
-                                    - Is the code modular and loosely coupled?
-                                    - Are responsibilities well-separated (SRP)?
-                                    - Can functions/classes be refactored into smaller reusable units?
-
-                                    6. Coding Standards & Clean Code Practices
-                                    - Check for naming conventions, consistent indentation, meaningful comments, standard structure, and adherence to clean code principles (DRY, KISS, YAGNI, SOLID).
-
-                                    7. Potential Bugs or Risky Logic
-                                    - Identify logic flaws, unexpected edge cases, unhandled scenarios, or potential runtime failures.
-
-                                    8. Recommended Fixes with Code Snippets
-                                    - Provide improved or corrected code snippets wherever applicable.
-                                    - Use proper code formatting and comment explanations.
-
-                                    9. Rating & Summary
-                                    - Provide a summary and rate the code on a scale of 1–10 in:
-                                        - Code Quality
-                                        - Security
-                                        - Exception Handling
-                                        - Performance
-                                        - Maintainability
-                                        - Standards Compliance
-
-                                    Also mention reviewed by LLM model name?
-
-                                    Please use structured markdown output with clear headers, sub-points, and bullet lists for each section.
-
-                                    Code to review:
-                                    ===========================
-
-                                    {content}
-
-                                    """
                                     review = safe_llm_call(prompt, selected_model)
                                     review_text = review.get("result", str(review)) if isinstance(review, dict) else review
                                     # Clean <think> sections from LLM output
@@ -460,6 +458,7 @@ elif menu == "Code Reviewer":
                                     review_text = re.sub(r"//* ", "", review_text, flags=re.DOTALL)
                                     review_text = re.sub(r"##", "", review_text, flags=re.DOTALL)
                                     review_text = re.sub(r"<think>.*?</think>", "", review_text, flags=re.DOTALL)
+                                    review_text=remove_markdown_using_html(review_text)
                                     embedding = get_embedding(content)
                                     add_to_collection(collection, doc_id=i + 1, embedding=embedding,
                                                     metadata={"file": str(file_path), "summary": review_text})
@@ -478,7 +477,7 @@ elif menu == "Code Reviewer":
                             # Display File-Level Review Table with Buttons
                             progress_bar.progress(1.0)
                             status_placeholder.empty()
-                            st.subheader("📄 File-Level Review Summary")
+                            st.subheader("📄 Project Summary")
                             if file_review_data:
                                 st.write("### File Reviews")
                                 # Table header
@@ -514,7 +513,7 @@ elif menu == "Code Reviewer":
                                 st.info("No files were reviewed. Check if the repository contains supported file types (.java, .py, .js, .html, .txt).")
 
                             # ===== ✅ Whole Project-Level Review =====
-                            st.subheader("🧠 Project-Level Review Summary")
+                            st.subheader("🧠 Overall-Project Summary")
                             project_code_combined = ""
                             for file_path in files:
                                 try:
@@ -523,68 +522,19 @@ elif menu == "Code Reviewer":
                                         project_code_combined += f"\n\n### File: {os.path.basename(file_path)}\n{content}"
                                 except Exception as e:
                                     continue
+                            # ✅ Load project review prompt from prompts directory
+                            PROJECT_PROMPT_PATH = "prompts/project_review_prompt.txt"
+                            if os.path.exists(PROJECT_PROMPT_PATH):
+                                with open(PROJECT_PROMPT_PATH, "r", encoding="utf-8") as f:
+                                    prompt_template = f.read()
+                            else:
+                                prompt_template = "Please review the following project code:\n\n{{project_code_combined}}"
 
-                            project_prompt = f"""
-                           You are a highly experienced Software Architect and Senior Code Reviewer.
-
-                            Your task is to provide a detailed, structured review of the entire codebase for this project. Consider the overall software quality, architecture design, and implementation practices.
-
-                            Please analyze and report on the following aspects:
-
-                            1. Security Architecture
-                            - Are there any vulnerabilities, weak patterns, or poor access control mechanisms?
-                            - Are secrets/configs exposed or handled unsafely?
-                            - Recommendations for improving security posture.
-
-                            2. Exception Handling
-                            - Are exceptions handled consistently and effectively?
-                            - Are there any missing try/catch blocks or poor error logging?
-                            - Suggest improvements for robust exception management.
-
-                            3. Performance & Scalability
-                            - Identify performance bottlenecks or inefficient logic.
-                            - Are there opportunities for async, caching, batch processing, etc.?
-                            - Recommendations to improve scalability.
-
-                            4. Modularity & Maintainability
-                            - Is the codebase well modularized?
-                            - Are responsibilities well separated (e.g., SRP, DRY, cohesion)?
-                            - Suggestions to improve testability, reusability, and readability.
-
-                            5. Coding Standards & Clean Code Practices
-                            - Are naming conventions, indentation, and structure consistent?
-                            - Any violations of SOLID, KISS, YAGNI, DRY, etc.?
-                            - Best practice suggestions for improvement.
-
-                            6. Project Structure & Design Patterns
-                            - Comment on folder structure, layering, usage of interfaces, abstraction, etc.
-                            - Are design patterns used appropriately (e.g., Factory, Singleton, Builder)?
-                            - Architectural improvements or refactor opportunities.
-
-                            7. Documentation & Code Comments
-                            - Are comments meaningful and helpful?
-                            - Is documentation adequate for understanding code flow?
-
-                            8. Summary Recommendations
-                            - List 3–5 actionable recommendations that will significantly improve this codebase.
-
-                            9. Rate the project on a scale of 1–10 for the following:
-                                - Security
-                                - Performance
-                                - Maintainability
-                                - Architecture Quality
-                                - Coding Standards
-
-
-                            Code Snapshot of the Project:
-                            ============================
-
-                            {project_code_combined}
-
-                            """
+                            project_prompt = prompt_template.replace("{{project_code_combined}}", project_code_combined)
                             project_review = safe_llm_call(project_prompt, selected_model)
                             review_text = project_review.get("result", str(project_review)) if isinstance(project_review, dict) else str(project_review)
                             review_text = re.sub(r"<think>.*?</think>", "", review_text, flags=re.DOTALL)
+                            review_text=remove_markdown_using_html(review_text)
 
                             path_md = os.path.join(report_dir, "project_overall_review.md")
                             with open(path_md, "w") as f:
