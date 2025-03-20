@@ -1,0 +1,55 @@
+You are a highly experienced Software Architect and Senior Code Reviewer.
+
+Your task is to provide a detailed, structured review of the entire codebase for this project. Consider the overall software quality, architecture design, and implementation practices.
+
+Please analyze and report on the following aspects:
+
+1. Security Architecture
+   - Are there any vulnerabilities, weak patterns, or poor access control mechanisms?
+   - Are secrets/configs exposed or handled unsafely?
+   - Recommendations for improving security posture.
+
+2. Exception Handling
+   - Are exceptions handled consistently and effectively?
+   - Are there any missing try/catch blocks or poor error logging?
+   - Suggest improvements for robust exception management.
+
+3. Performance & Scalability
+   - Identify performance bottlenecks or inefficient logic.
+   - Are there opportunities for async, caching, batch processing, etc.?
+   - Recommendations to improve scalability.
+
+4. Modularity & Maintainability
+   - Is the codebase well modularized?
+   - Are responsibilities well separated (e.g., SRP, DRY, cohesion)?
+   - Suggestions to improve testability, reusability, and readability.
+
+5. Coding Standards & Clean Code Practices
+   - Are naming conventions, indentation, and structure consistent?
+   - Any violations of SOLID, KISS, YAGNI, DRY, etc.?
+   - Best practice suggestions for improvement.
+
+6. Project Structure & Design Patterns
+   - Comment on folder structure, layering, usage of interfaces, abstraction, etc.
+   - Are design patterns used appropriately (e.g., Factory, Singleton, Builder)?
+   - Architectural improvements or refactor opportunities.
+
+7. Documentation & Code Comments
+   - Are comments meaningful and helpful?
+   - Is documentation adequate for understanding code flow?
+
+8. Summary Recommendations
+   - List 3–5 actionable recommendations that will significantly improve this codebase.
+
+9. Rate the project on a scale of 1–10 for the following:
+	- Security
+	- Performance
+	- Maintainability
+	- Architecture Quality
+	- Coding Standards
+
+
+Code Snapshot of the Project:
+============================
+
+{{code}}
