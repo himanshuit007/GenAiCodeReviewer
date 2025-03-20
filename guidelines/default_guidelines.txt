@@ -1,10 +1,4 @@
-Please perform a detailed code review of the following source code with below guidelines : 
-
-1. Follow clean code principles.
-2. Ensure proper exception handling.
-3. Maintain modularity and separation of concerns.
-4. Avoid code duplication.
-5. Follow architecture layering standards.
+Please perform a detailed code review of the following source code
 
 Identify and classify any issues under the following categories:
 - Issue Type: Security / Coding Practice / Logic
