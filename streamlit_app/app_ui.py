@@ -50,7 +50,7 @@ fun_facts = [
     "🏗️ Architecture is not about frameworks. It's about boundaries.",
     "🕵️‍♂️ Your future self will be your most frequent code reader—be kind."
 ]
-
+supported_files=('.java', '.py', '.js', '.html', '.txt')
 # Create default admin account on first run
 def ensure_default_admin():
     users = load_users()
@@ -330,7 +330,7 @@ elif menu == "Code Reviewer":
                             with open(project_md, "r", encoding="utf-8") as f:
                                 summary_text = f.read()
                             st.markdown("**🧠 Project-Level Review (Preview)**")
-                            st.markdown(summary_text[:1000] + "..." if len(summary_text) > 1000 else summary_text)
+                            st.markdown(summary_text + "..." if len(summary_text) > 1000 else summary_text)
                             with open(project_md, "rb") as f:
                                 st.download_button("📥 Download Project-Level Summary", f, file_name=f"{project}_overall_review.md")
 
@@ -343,7 +343,7 @@ elif menu == "Code Reviewer":
                                 data = json.load(f)
                             file_review_data.append({
                                 "File": os.path.basename(data.get("file", "-")),
-                                "Summary (First 200 chars)": data.get("summary", "")[:200] + "..."
+                                "Summary": data.get("summary", "") + "..."
                             })
 
                         if file_review_data:
@@ -379,7 +379,7 @@ elif menu == "Code Reviewer":
                             project_path = clone_repo(repo_url)
                             project_name = os.path.basename(project_path).split("_")[0]
                             files = read_project_files(project_path)
-                            files = [f for f in files if f.endswith(('.java', '.py', '.js', '.html', '.txt'))]
+                            files = [f for f in files if f.endswith(supported_files)]
                             report_dir = os.path.join("user_data", st.session_state.username, "projects", project_name, "code_review_reports")
                             os.makedirs(report_dir, exist_ok=True)
                             st.session_state["report_dir"] = report_dir
@@ -394,12 +394,73 @@ elif menu == "Code Reviewer":
                                 try:
                                     with open(file_path, "r", encoding="utf-8") as f:
                                         content = f.read()
-                                    prompt = f"Review this code for best practices. Also mention who are you?:\n\n{content[:1500]}"
+                                    prompt = f"""
+                                    You are a senior software architect and expert code reviewer.
+
+                                    Your task is to analyze the following source code thoroughly and identify all potential issues and improvements.
+
+                                    Please review the code using the following structure:
+
+                                    ---
+
+                                    1. Code Quality Issues
+                                    - Highlight problems related to readability, naming conventions, unused code, duplicate logic, deep nesting, or long methods.
+                                    - Suggest best practices to improve clarity and maintainability.
+
+                                    2. Security Vulnerabilities
+                                    - Identify any unsafe practices, such as hardcoded secrets, insecure APIs, open endpoints, injection vulnerabilities, or insufficient validation/sanitization.
+
+                                    3. Exception Handling
+                                    - Analyze how errors and exceptions are managed.
+                                    - Are exceptions caught and logged properly?
+                                    - Are there missing try/catch blocks or poor error escalation patterns?
+
+                                    4. Performance Bottlenecks
+                                    - Are there inefficient loops, expensive operations, excessive memory usage, or synchronous operations that can be optimized?
+                                    - Suggestions for performance tuning (e.g., caching, batching, lazy loading).
+
+                                    5. Maintainability & Modularity
+                                    - Is the code modular and loosely coupled?
+                                    - Are responsibilities well-separated (SRP)?
+                                    - Can functions/classes be refactored into smaller reusable units?
+
+                                    6. Coding Standards & Clean Code Practices
+                                    - Check for naming conventions, consistent indentation, meaningful comments, standard structure, and adherence to clean code principles (DRY, KISS, YAGNI, SOLID).
+
+                                    7. Potential Bugs or Risky Logic
+                                    - Identify logic flaws, unexpected edge cases, unhandled scenarios, or potential runtime failures.
+
+                                    8. Recommended Fixes with Code Snippets
+                                    - Provide improved or corrected code snippets wherever applicable.
+                                    - Use proper code formatting and comment explanations.
+
+                                    9. Rating & Summary
+                                    - Provide a summary and rate the code on a scale of 1–10 in:
+                                        - Code Quality
+                                        - Security
+                                        - Exception Handling
+                                        - Performance
+                                        - Maintainability
+                                        - Standards Compliance
+
+                                    Also mention reviewed by LLM model name?
+
+                                    Please use structured markdown output with clear headers, sub-points, and bullet lists for each section.
+
+                                    Code to review:
+                                    ===========================
+
+                                    {content}
+
+                                    """
                                     review = safe_llm_call(prompt, selected_model)
                                     review_text = review.get("result", str(review)) if isinstance(review, dict) else review
                                     # Clean <think> sections from LLM output
+                                    review_text = re.sub(r"//*//*", "", review_text, flags=re.DOTALL)
+                                    review_text = re.sub(r"//* ", "", review_text, flags=re.DOTALL)
+                                    review_text = re.sub(r"##", "", review_text, flags=re.DOTALL)
                                     review_text = re.sub(r"<think>.*?</think>", "", review_text, flags=re.DOTALL)
-                                    embedding = get_embedding(content[:15000])
+                                    embedding = get_embedding(content)
                                     add_to_collection(collection, doc_id=i + 1, embedding=embedding,
                                                     metadata={"file": str(file_path), "summary": review_text})
                                     with open(os.path.join(report_dir, f"review_{i+1}.json"), "w") as out:
@@ -459,24 +520,67 @@ elif menu == "Code Reviewer":
                                 try:
                                     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                                         content = f.read()
-                                        project_code_combined += f"\n\n### File: {os.path.basename(file_path)}\n{content[:2000]}"
+                                        project_code_combined += f"\n\n### File: {os.path.basename(file_path)}\n{content}"
                                 except Exception as e:
                                     continue
 
                             project_prompt = f"""
-                            You are a senior software architect. Provide a project-level code review covering:
-                            1. Security
+                           You are a highly experienced Software Architect and Senior Code Reviewer.
+
+                            Your task is to provide a detailed, structured review of the entire codebase for this project. Consider the overall software quality, architecture design, and implementation practices.
+
+                            Please analyze and report on the following aspects:
+
+                            1. Security Architecture
+                            - Are there any vulnerabilities, weak patterns, or poor access control mechanisms?
+                            - Are secrets/configs exposed or handled unsafely?
+                            - Recommendations for improving security posture.
+
                             2. Exception Handling
-                            3. Performance
-                            4. Maintainability
-                            5. Coding Standards
-                            6. Suggestions
+                            - Are exceptions handled consistently and effectively?
+                            - Are there any missing try/catch blocks or poor error logging?
+                            - Suggest improvements for robust exception management.
 
-                            Also mention who are you?
+                            3. Performance & Scalability
+                            - Identify performance bottlenecks or inefficient logic.
+                            - Are there opportunities for async, caching, batch processing, etc.?
+                            - Recommendations to improve scalability.
 
-                            Review Below Project:
-                            =====================
+                            4. Modularity & Maintainability
+                            - Is the codebase well modularized?
+                            - Are responsibilities well separated (e.g., SRP, DRY, cohesion)?
+                            - Suggestions to improve testability, reusability, and readability.
+
+                            5. Coding Standards & Clean Code Practices
+                            - Are naming conventions, indentation, and structure consistent?
+                            - Any violations of SOLID, KISS, YAGNI, DRY, etc.?
+                            - Best practice suggestions for improvement.
+
+                            6. Project Structure & Design Patterns
+                            - Comment on folder structure, layering, usage of interfaces, abstraction, etc.
+                            - Are design patterns used appropriately (e.g., Factory, Singleton, Builder)?
+                            - Architectural improvements or refactor opportunities.
+
+                            7. Documentation & Code Comments
+                            - Are comments meaningful and helpful?
+                            - Is documentation adequate for understanding code flow?
+
+                            8. Summary Recommendations
+                            - List 3–5 actionable recommendations that will significantly improve this codebase.
+
+                            9. Rate the project on a scale of 1–10 for the following:
+                                - Security
+                                - Performance
+                                - Maintainability
+                                - Architecture Quality
+                                - Coding Standards
+
+
+                            Code Snapshot of the Project:
+                            ============================
+
                             {project_code_combined}
+
                             """
                             project_review = safe_llm_call(project_prompt, selected_model)
                             review_text = project_review.get("result", str(project_review)) if isinstance(project_review, dict) else str(project_review)

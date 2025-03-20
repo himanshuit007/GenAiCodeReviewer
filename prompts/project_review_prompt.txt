@@ -52,4 +52,4 @@ Please analyze and report on the following aspects:
 Code Snapshot of the Project:
 ============================
 
-{{code}}
+{{project_code_combined}}
