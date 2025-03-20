@@ -19,9 +19,52 @@ from app.qa_engine import answer_question
 
 USER_DB = "user_data/users.json"
 LOGIN_LOG = "user_data/user_login_log.json"
+SESSION_CACHE_FILE = "user_data/session_cache.json"
+
+import random
+
+fun_facts = [
+    "💡 Great software architecture is invisible—it just works.",
+    "🔐 Don't store secrets in code. Environment variables are your friends!",
+    "🐛 Most bugs are born during copy-paste operations.",
+    "📐 Good code reads like a story. Great code writes itself.",
+    "🧠 Clean code is not written, it is rewritten.",
+    "⚠️ Premature optimization is the root of all evil. – Donald Knuth",
+    "📦 Your code is only as good as your documentation.",
+    "🎯 A function should do one thing, and do it well.",
+    "🔄 Code duplication is evil. DRY it or die trying!",
+    "🧱 Microservices are like LEGO bricks—modular and replaceable.",
+    "📊 Always measure before you optimize. Assumptions lie.",
+    "🧠 Comments should explain 'why', not 'what'.",
+    "🔍 If it’s not tested, it’s broken — even if it works today.",
+    "⚡ Async isn't a buzzword. It's a solution to real-world latency.",
+    "🔒 Never trust user input. Sanitize early, sanitize often.",
+    "💬 Code reviews aren’t critiques—they’re conversations.",
+    "🔁 If you can't test it, you can't trust it.",
+    "📈 Code that scales is code that separates concerns well.",
+    "🏗️ Architecture is not about frameworks. It's about boundaries.",
+    "🕵️‍♂️ Your future self will be your most frequent code reader—be kind."
+]
+
+# Create default admin account on first run
+def ensure_default_admin():
+    users = load_users()
+    if "admin" not in users:
+        users["admin"] = {
+            "password": hash_password("admin123"),
+            "email": "admin@djdwij.com",
+            "role": "admin",
+            "created_at": str(datetime.now())
+        }
+        save_users(users)
+        print("✅ Default admin user created: admin / admin123")
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
+
+def is_valid_github_url(url):
+    github_regex = r"^https:\/\/(www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?$"
+    return re.match(github_regex, url)
 
 def load_users():
     if not os.path.exists(USER_DB):
@@ -68,6 +111,24 @@ def log_user_login(username):
     with open(LOGIN_LOG, "w") as f:
         json.dump(logs, f, indent=2)
 
+def save_session(username):
+    users = load_users()
+    role = users.get(username, {}).get("role", "dev")
+    with open(SESSION_CACHE_FILE, "w") as f:
+        json.dump({"username": username, "role": role}, f)
+
+def restore_session():
+    if os.path.exists(SESSION_CACHE_FILE):
+        with open(SESSION_CACHE_FILE, "r") as f:
+            data = json.load(f)
+            st.session_state.logged_in = True
+            st.session_state.username = data["username"]
+            st.session_state.role = data["role"]
+
+
+ensure_default_admin()
+restore_session()
+
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = ""
@@ -77,30 +138,19 @@ if "menu" not in st.session_state:
 # Menu logic based on login state
 # Menu logic based on login state
 if not st.session_state.get("logged_in"):
-    menu = st.sidebar.selectbox(
-        "Menu",
-        ["Login", "Register", "Forgot Password"],
-        index=["Login", "Register", "Forgot Password"].index(
-            st.session_state.get("menu", "Login")
-        )
-    )
+    options = ["Login", "Register", "Forgot Password"]
+    default_menu = st.session_state.get("menu", "Login")
+    default_index = options.index(default_menu) if default_menu in options else 0
+    menu = st.sidebar.selectbox("Menu", options, index=default_index)
 else:
     if st.session_state.get("role") == "admin":
-        menu = st.sidebar.selectbox(
-            "Menu",
-            ["Profile", "Code Reviewer", "Admin Dashboard", "Logout"],
-            index=["Profile", "Code Reviewer", "Admin Dashboard", "Logout"].index(
-                st.session_state.get("menu", "Code Reviewer")
-            )
-        )
+        options = ["Code Reviewer","Profile", "Admin Dashboard", "Logout"]
     else:
-        menu = st.sidebar.selectbox(
-            "Menu",
-            ["Profile", "Code Reviewer", "Logout"],
-            index=["Profile", "Code Reviewer", "Logout"].index(
-                st.session_state.get("menu", "Code Reviewer")
-            )
-        )
+        options = ["Code Reviewer","Profile", "Logout"]
+    default_menu = st.session_state.get("menu", "Code Reviewer")
+    default_index = options.index(default_menu) if default_menu in options else 0
+    menu = st.sidebar.selectbox("Menu", options, index=default_index)
+
 
 
 # ========== Menu: Register ==========
@@ -109,7 +159,6 @@ if menu == "Register":
     new_user = st.text_input("New Username")
     new_email = st.text_input("Email")
     new_password = st.text_input("New Password", type="password")
-    role = st.selectbox("Select Role", ["dev", "admin"])
     if st.button("Register"):
         if register_user(new_user, new_password, new_email, role):
             st.success("✅ Registration successful!")
@@ -124,6 +173,7 @@ elif menu == "Login":
     if st.button("Login"):
         if authenticate_user(username, password):
             st.session_state.logged_in = True
+            save_session(username)
             st.session_state.username = username
             st.session_state.role = load_users()[username].get("role", "dev")
             log_user_login(username)
@@ -203,106 +253,40 @@ elif menu == "Logout":
     st.session_state.logged_in = False
     st.session_state.username = ""
     st.success("Logged out successfully.")
+    if os.path.exists(SESSION_CACHE_FILE):
+        os.remove(SESSION_CACHE_FILE)
 
 # ========== Menu: Code Reviewer ==========
 elif menu == "Code Reviewer":
+    if "show_prev_projects" not in st.session_state:
+        st.session_state.show_prev_projects = False
+    if "show_new_review" not in st.session_state:
+        st.session_state.show_new_review = False
+
     if not st.session_state.logged_in:
         st.warning("Please login to use the reviewer.")
     else:
         if st.session_state.get("show_login_msg", False):
             st.success(f"Welcome {st.session_state.username}!")
             st.session_state.show_login_msg = False
+            st.info(random.choice(fun_facts))
+        st.subheader("🧭 What would you like to do?")
 
-        repo_url = st.text_input("Enter GitHub Repo URL")
+        col1, col2 = st.columns(2)
 
-        def safe_llm_call(prompt, timeout_seconds=60):
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(answer_question, prompt)
-                try:
-                    return future.result(timeout=timeout_seconds)
-                except TimeoutError:
-                    return "⚠️ LLM timeout."
+        with col1:
+            if st.button("🚀 Start a New Review"):
+                st.session_state.show_new_review = True
+                st.session_state.show_prev_projects = False
+        with col2:
+            if st.button("📂 View Previous Projects"):
+                st.session_state.show_prev_projects = True
+                st.session_state.show_new_review = False
 
-        if st.button("Start Review"):
-            try:
-                with st.spinner("Cloning and reviewing..."):
-                    project_path = clone_repo(repo_url)
-                    project_name = os.path.basename(project_path).split("_")[0]
-                    files = read_project_files(project_path)
-                    files = [f for f in files if f.endswith(('.java', '.py', '.js', '.html', '.txt'))]
-                    report_dir = os.path.join("user_data", st.session_state.username, "projects", project_name, "code_review_reports")
-                    os.makedirs(report_dir, exist_ok=True)
-                    st.session_state["report_dir"] = report_dir
-                    collection = create_collection(f"{st.session_state.username}_{project_name}")
 
-                    progress_bar = st.progress(0)
-                    status_placeholder = st.empty()
-                    status_table = []
-
-                    def review_file(i, file_path):
-                        file_name = os.path.basename(file_path)
-                        try:
-                            with open(file_path, "r", encoding="utf-8") as f:
-                                content = f.read()
-                            prompt = f"Review this code for best practices:\n\n{content[:1500]}"
-                            review = safe_llm_call(prompt)
-                            review_text = review.get("result", str(review)) if isinstance(review, dict) else review
-                            review_text = re.sub(r"<think>(.*?)</think>", "", review_text, flags=re.DOTALL)
-                            embedding = get_embedding(content[:1500])
-                            add_to_collection(collection, doc_id=i + 1, embedding=embedding,
-                                              metadata={"file": str(file_path), "summary": review_text})
-                            with open(os.path.join(report_dir, f"review_{i+1}.json"), "w") as out:
-                                json.dump({"file": file_path, "summary": review_text}, out)
-                            return {"File": file_name, "Status": "✅ Reviewed"}
-                        except Exception as e:
-                            return {"File": file_name, "Status": f"❌ {str(e)}"}
-
-                    with ThreadPoolExecutor(max_workers=20) as executor:
-                        futures = {executor.submit(review_file, i, file): file for i, file in enumerate(files)}
-                        for i, future in enumerate(as_completed(futures)):
-                            status_table.append(future.result())
-                            progress_bar.progress((i + 1) / len(files))
-                    
-                    
-                    
-
-                    # ===== ✅ Whole Project-Level Review =====
-                    st.subheader("🧠 Project-Level Review Summary")
-                    project_code_combined = ""
-                    for file_path in files:
-                        try:
-                            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                                content = f.read()
-                                project_code_combined += f"\n\n### File: {os.path.basename(file_path)}\n{content[:2000]}"
-                        except Exception as e:
-                            continue
-
-                    project_prompt = f"""
-                    You are a senior software architect. Provide a project-level code review covering:
-                    1. Security
-                    2. Exception Handling
-                    3. Performance
-                    4. Maintainability
-                    5. Coding Standards
-                    6. Suggestions
-
-                    Review Below Project:
-                    =====================
-                    {project_code_combined}
-                    """
-                    project_review = safe_llm_call(project_prompt)
-                    review_text = project_review.get("result", str(project_review)) if isinstance(project_review, dict) else str(project_review)
-
-                    path_md = os.path.join(report_dir, "project_overall_review.md")
-                    with open(path_md, "w") as f:
-                        f.write(review_text)
-                    st.markdown(review_text)
-                    with open(path_md, "rb") as f:
-                        st.download_button("📥 Download Project-Level Review", f, file_name="project_overall_review.md")
-
-            except Exception as e:
-                st.error(f"Review Failed: {e}")
-
+        # ---------------------------------------------
+        # 🟢 View Previous Projects Block
+        if st.session_state.show_prev_projects:
             st.subheader("📂 Previously Reviewed Projects")
 
             project_base_dir = os.path.join("user_data", st.session_state.username, "projects")
@@ -341,3 +325,104 @@ elif menu == "Code Reviewer":
                         if file_review_data:
                             st.markdown("**📄 File-Level Reviews (Summary Preview Table)**")
                             st.dataframe(pd.DataFrame(file_review_data), use_container_width=True)
+                # ---------------------------------------------
+                # 🟢 Start New Review Block
+        elif st.session_state.show_new_review:
+
+            repo_url = st.text_input("Enter GitHub Repo URL")
+
+            def safe_llm_call(prompt, timeout_seconds=60):
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(answer_question, prompt)
+                    try:
+                        return future.result(timeout=timeout_seconds)
+                    except TimeoutError:
+                        return "⚠️ LLM timeout."
+
+            if st.button("Start Review"):
+                if not is_valid_github_url(repo_url):
+                    st.error("❌ Invalid GitHub repository URL. It should be in format: https://github.com/username/repository")
+                else:
+                    try:
+                        fact = random.choice(fun_facts)
+                        with st.spinner(f"Cloning and reviewing project..."):
+                            project_path = clone_repo(repo_url)
+                            project_name = os.path.basename(project_path).split("_")[0]
+                            files = read_project_files(project_path)
+                            files = [f for f in files if f.endswith(('.java', '.py', '.js', '.html', '.txt'))]
+                            report_dir = os.path.join("user_data", st.session_state.username, "projects", project_name, "code_review_reports")
+                            os.makedirs(report_dir, exist_ok=True)
+                            st.session_state["report_dir"] = report_dir
+                            collection = create_collection(f"{st.session_state.username}_{project_name}")
+
+                            progress_bar = st.progress(0)
+                            status_placeholder = st.empty()
+                            status_table = []
+
+                            def review_file(i, file_path):
+                                file_name = os.path.basename(file_path)
+                                try:
+                                    with open(file_path, "r", encoding="utf-8") as f:
+                                        content = f.read()
+                                    prompt = f"Review this code for best practices:\n\n{content[:1500]}"
+                                    review = safe_llm_call(prompt)
+                                    review_text = review.get("result", str(review)) if isinstance(review, dict) else review
+                                    # Clean <think> sections from LLM output
+                                    review_text = re.sub(r"<think>.*?</think>", "", review_text, flags=re.DOTALL)
+                                    embedding = get_embedding(content[:15000])
+                                    add_to_collection(collection, doc_id=i + 1, embedding=embedding,
+                                                    metadata={"file": str(file_path), "summary": review_text})
+                                    with open(os.path.join(report_dir, f"review_{i+1}.json"), "w") as out:
+                                        json.dump({"file": file_path, "summary": review_text}, out)
+                                    return {"File": file_name, "Status": "✅ Reviewed"}
+                                except Exception as e:
+                                    return {"File": file_name, "Status": f"❌ {str(e)}"}
+
+                            with ThreadPoolExecutor(max_workers=20) as executor:
+                                futures = {executor.submit(review_file, i, file): file for i, file in enumerate(files)}
+                                for i, future in enumerate(as_completed(futures)):
+                                    status_table.append(future.result())
+                                    progress_bar.progress((i + 1) / len(files))
+                            
+                            
+                            
+
+                            # ===== ✅ Whole Project-Level Review =====
+                            st.subheader("🧠 Project-Level Review Summary")
+                            project_code_combined = ""
+                            for file_path in files:
+                                try:
+                                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                                        content = f.read()
+                                        project_code_combined += f"\n\n### File: {os.path.basename(file_path)}\n{content[:2000]}"
+                                except Exception as e:
+                                    continue
+
+                            project_prompt = f"""
+                            You are a senior software architect. Provide a project-level code review covering:
+                            1. Security
+                            2. Exception Handling
+                            3. Performance
+                            4. Maintainability
+                            5. Coding Standards
+                            6. Suggestions
+
+                            Review Below Project:
+                            =====================
+                            {project_code_combined}
+                            """
+                            project_review = safe_llm_call(project_prompt)
+                            review_text = project_review.get("result", str(project_review)) if isinstance(project_review, dict) else str(project_review)
+                            review_text = re.sub(r"<think>.*?</think>", "", review_text, flags=re.DOTALL)
+
+                            path_md = os.path.join(report_dir, "project_overall_review.md")
+                            with open(path_md, "w") as f:
+                                f.write(review_text)
+                            st.markdown(review_text)
+                            with open(path_md, "rb") as f:
+                                st.download_button("📥 Download Project-Level Review", f, file_name="project_overall_review.md")
+
+                    except Exception as e:
+                        st.error(f"Review Failed: {e}")
+
+                
